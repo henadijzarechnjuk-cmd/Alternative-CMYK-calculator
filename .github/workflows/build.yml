@@ -1,0 +1,31 @@
+name: C++ Build Pipeline
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Add MSBuild to PATH
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Setup Developer Command Prompt
+      uses: ilammy/msvc-dev-cmd@v1
+
+    - name: Compile C++ Code
+      shell: cmd
+      run: |
+        cl.exe /EHsc /O2 /W4 *.cpp /Fe:MyProgram.exe
+
+    - name: Upload Executable Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Compiled-Executable
+        path: MyProgram.exe
