@@ -1,9 +1,7 @@
 name: C++ Build Pipeline
 
 on:
-  push:
-    branches: [ "main", "master" ]
-  workflow_dispatch:
+  workflow_dispatch: # Запуск тільки вручну за кнопкою
 
 jobs:
   build:
