@@ -29,10 +29,31 @@ jobs:
         cl.exe /EHsc /O2 /LD /Iinclude /I"%VCPKG_INSTALLATION_ROOT%\installed\x64-windows\include" src\core\*.cpp /Fe:core.dll "%VCPKG_INSTALLATION_ROOT%\installed\x64-windows\lib\lcms2.lib" /link /DLL
 
     # Компіляція EXE
-    - name: Compile GUI EXE
+# 1. Збираємо C++ ядро в DLL для подальшого виклику з Dart FFI
+    - name: Compile C++ Engine DLL
       shell: cmd
       run: |
-        cl.exe /EHsc /O2 /Iinclude src\gui\*.cpp core.lib /Fe:app.exe /link /SUBSYSTEM:WINDOWS
+        cl.exe /EHsc /O2 /LD /Iinclude src\core\*.cpp /Fe:cmyk_engine.dll
+
+    # 2. Інсталюємо Flutter у середовищі GitHub Actions
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        channel: 'stable'
+
+    # 3. Підтягуємо залежності Flutter
+    - name: Get Flutter Packages
+      run: flutter pub get
+
+    # 4. Компілюємо Windows-додаток з Flutter
+    - name: Build Flutter Windows App
+      run: flutter build windows --release
+
+    # 5. Копіюємо зкомпільовану C++ DLL поруч із виконавчими файлами додатка
+    - name: Copy C++ DLL to Release Folder
+      shell: cmd
+      run: |
+        copy cmyk_engine.dll build\windows\x64\runner\Release\
 
     # Пакування готового результату
     - name: Upload Binaries (EXE + DLL)
