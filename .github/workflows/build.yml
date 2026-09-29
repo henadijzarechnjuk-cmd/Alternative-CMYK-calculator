@@ -1,7 +1,7 @@
-name: C++ Build Pipeline
+name: C++ Build Pipeline (DLL + GUI EXE)
 
 on:
-  workflow_dispatch: # Запуск тільки вручну за кнопкою
+  workflow_dispatch: # Ручний запуск за кнопкою в інтерфейсі GitHub
 
 jobs:
   build:
@@ -17,13 +17,23 @@ jobs:
     - name: Setup Developer Command Prompt
       uses: ilammy/msvc-dev-cmd@v1
 
-    - name: Compile C++ Code
+    # Крок 1: Компіляція DLL з папки src/core/
+    - name: Compile Core DLL
       shell: cmd
       run: |
-        cl.exe /EHsc /O2 /W4 *.cpp /Fe:MyProgram.exe
+        cl.exe /EHsc /O2 /LD /Iinclude src\core\*.cpp /Fe:core.dll /link /DLL
 
-    - name: Upload Executable Artifact
+    # Крок 2: Компіляція EXE з папки src/gui/ та лінкування з core.lib
+    - name: Compile GUI EXE
+      shell: cmd
+      run: |
+        cl.exe /EHsc /O2 /Iinclude src\gui\*.cpp core.lib /Fe:app.exe /link /SUBSYSTEM:WINDOWS
+
+    # Крок 3: Пакування підсумкового релізу (EXE + DLL)
+    - name: Upload Binaries (EXE + DLL)
       uses: actions/upload-artifact@v4
       with:
-        name: Compiled-Executable
-        path: MyProgram.exe
+        name: Compiled-App-Release
+        path: |
+          app.exe
+          core.dll
