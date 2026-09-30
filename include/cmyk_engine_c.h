@@ -1,77 +1,44 @@
-#include <iostream>
-#include <vector>
-#include <cmath>
-#include "lcms2.h"
+#pragma once
+#include <wchar.h>
 
-// Структура для збереження результатів
-struct CMYKColor {
-    double c, m, y, k;
-};
+#ifdef _WIN32
+#define CMYK_ENGINE_API __declspec(dllexport)
+#else
+#define CMYK_ENGINE_API __attribute__((visibility("default")))
+#endif
 
-class ColorEngine {
-private:
-    cmsHPROFILE hProfile;
-    cmsHTRANSFORM hCmykToLab;
-    cmsHTRANSFORM hLabToCmyk;
-    cmsHTRANSFORM hCmykCheckGamut;
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-public:
-    ColorEngine(const char* profilePath) {
-        // Завантаження ICC-профілю (наприклад, Fogra39.icc)
-        hProfile = cmsOpenProfileFromFile(profilePath, "r");
-        cmsHPROFILE hLabProfile = cmsCreateLab4Profile(NULL);
+// Створює рушій із CMYK ICC-профілю (шлях у UTF-16, тож кирилиця в шляху працює).
+// Повертає nullptr при помилці; код помилки пишеться в *error_code (може бути NULL).
+//   -1 невалідні аргументи, -2 файл не відкрився, -3 не CMYK-профіль або пошкоджений,
+//   -4 не вдалося створити трансформації, -9 внутрішній виняток
+CMYK_ENGINE_API void* engine_create(const wchar_t* profile_path, int* error_code);
 
-        if (!hProfile || !hLabProfile) {
-            std::cerr << "Помилка завантаження профілю!" << std::endl;
-            return;
-        }
+CMYK_ENGINE_API void engine_destroy(void* engine);
 
-        // 1. Трансформація CMYK -> Lab
-        hCmykToLab = cmsCreateTransform(hProfile, TYPE_CMYK_DBL,
-                                        hLabProfile, TYPE_Lab_DBL,
-                                        INTENT_RELATIVE_COLORIMETRIC, 0);
+// Шукає CMYK з мінімальним ΔE2000 до кольору in_cmyk при обмеженні 0 <= канал <= max_ink[канал].
+//   in_cmyk[4], max_ink[4]: відсотки 0..100 (порядок C, M, Y, K)
+//   max_delta_e: допуск, лише для прапорця within_tolerance
+//   out[19]:
+//     0..3   результат CMYK (%)
+//     4..6   Lab вхідного кольору
+//     7..9   Lab результату
+//     10     ΔE2000 (вхід vs результат)
+//     11     1.0 якщо ΔE <= max_delta_e, інакше 0.0
+//     12..14 sRGB вхідного кольору (0..255)
+//     15..17 sRGB результату (0..255)
+//     18     сума фарб результату (%)
+// Повертає 0 або код помилки: -1 аргументи, -5 in_cmyk поза 0..100,
+//   -6 max_ink поза 0..100, -7 max_delta_e < 0, -9 внутрішній виняток
+CMYK_ENGINE_API int engine_search(void* engine,
+                                  const double* in_cmyk,
+                                  const double* max_ink,
+                                  double max_delta_e,
+                                  double* out);
 
-        // 2. Зворотна трансформація Lab -> CMYK
-        hLabToCmyk = cmsCreateTransform(hLabProfile, TYPE_Lab_DBL,
-                                        hProfile, TYPE_CMYK_DBL,
-                                        INTENT_RELATIVE_COLORIMETRIC, 0);
-
-        // 3. Трансформація для перевірки Gamut (повертає 0 якщо в межах, >0 якщо поза)
-        hCmykCheckGamut = cmsCreateProofingTransform(hProfile, TYPE_CMYK_DBL,
-                                                     hLabProfile, TYPE_Lab_DBL,
-                                                     hProfile, INTENT_RELATIVE_COLORIMETRIC,
-                                                     INTENT_RELATIVE_COLORIMETRIC, 
-                                                     cmsFLAGS_GAMUTCHECK);
-
-        cmsCloseProfile(hLabProfile);
-    }
-
-    ~ColorEngine() {
-        if (hCmykToLab) cmsDeleteTransform(hCmykToLab);
-        if (hLabToCmyk) cmsDeleteTransform(hLabToCmyk);
-        if (hCmykCheckGamut) cmsDeleteTransform(hCmykCheckGamut);
-        if (hProfile) cmsCloseProfile(hProfile);
-    }
-
-    // Перевірка, чи лежить точка CMYK у межах охоплення профілю
-    bool IsInGamut(const CMYKColor& cmyk) {
-        cmsCIELab lab;
-        cmsUInt16Number alarm;
-        
-        // Перевіряємо через масив прапорців Gamut Check
-        cmsDoTransform(hCmykCheckGamut, &cmyk, &alarm, 1);
-        return (alarm == 0);
-    }
-
-    // Розрахунок Delta E 2000 між двома кольорами Lab
-    double CalculateDeltaE2000(const cmsCIELab& lab1, const cmsCIELab& lab2) {
-        return cmsCIE2000DeltaE(&lab1, &lab2, 1.0, 1.0, 1.0);
-    }
-
-    // Перетворення CMYK -> Lab
-    cmsCIELab ConvertCMYKtoLab(const CMYKColor& cmyk) {
-        cmsCIELab lab;
-        cmsDoTransform(hCmykToLab, &cmyk, &lab, 1);
-        return lab;
-    }
-};
+#ifdef __cplusplus
+}
+#endif

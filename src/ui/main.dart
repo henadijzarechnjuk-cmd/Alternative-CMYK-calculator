@@ -1,9 +1,12 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-void main() {
-  runApp(const SmartCmykApp());
-}
+import 'cmyk_engine.dart';
+
+void main() => runApp(const SmartCmykApp());
 
 class SmartCmykApp extends StatelessWidget {
   const SmartCmykApp({super.key});
@@ -20,82 +23,235 @@ class SmartCmykApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: const SmartCmykCalculatorScreen(),
+      home: const CalculatorScreen(),
     );
   }
 }
 
-class SmartCmykCalculatorScreen extends StatefulWidget {
-  const SmartCmykCalculatorScreen({super.key});
+class CalculatorScreen extends StatefulWidget {
+  const CalculatorScreen({super.key});
 
   @override
-  State<SmartCmykCalculatorScreen> createState() => _SmartCmykCalculatorScreenState();
+  State<CalculatorScreen> createState() => _CalculatorScreenState();
 }
 
-class _SmartCmykCalculatorScreenState extends State<SmartCmykCalculatorScreen> {
-  // Профіль
-  String _selectedProfile = 'PSO Coated v3 (FOGRA51)';
-  final List<String> _profiles = [
-    'PSO Coated v3 (FOGRA51)',
-    'Coated FOGRA39',
-    'PSO Uncoated v3 (FOGRA52)',
+class _CalculatorScreenState extends State<CalculatorScreen> {
+  static const _magenta = Color(0xFFE91E8C);
+  static const _grey = Color(0xFF595959);
+  static const _names = ['C', 'M', 'Y', 'K'];
+
+  final _cmykCtl = [
+    for (final v in ['90', '80', '30', '50']) TextEditingController(text: v)
   ];
+  final _deCtl = TextEditingController(text: '2.0');
+  final List<double> _limits = [100, 100, 100, 100];
 
-  // Вхідні значення CMYK
-  double _srcC = 90.0, _srcM = 80.0, _srcY = 30.0, _srcK = 50.0;
-  double _deltaE = 1.5;
+  final List<String> _profilePaths = [];
+  String? _profilePath;
+  CmykEngine? _engine;
 
-  // Канальні ліміти (100% = нема ліміту)
-  double _limitC = 100.0, _limitM = 100.0, _limitY = 100.0, _limitK = 100.0;
+  SearchResult? _result;
+  String _status = 'Оберіть CMYK-профіль, задайте параметри й натисніть «Розрахувати».';
+  bool _busy = false;
 
-  // Результат розрахунку (за замовчуванням до розрахунку — null)
-  Color _originalRgb = const Color(0xFF1B2A3D); // Приклад обчисленого початкового RGB
-  Color? _resultRgb; // Внутрішній квадрат (сірий до розрахунку)
-  
-  String _statusMessage = 'Готовий до обчислень. Задайте параметри та натисніть «Розрахувати».';
-  bool _isCalculating = false;
+  @override
+  void initState() {
+    super.initState();
+    _scanSystemProfiles();
+  }
 
-  void _onCalculate() async {
+  @override
+  void dispose() {
+    _engine?.close();
+    for (final c in _cmykCtl) {
+      c.dispose();
+    }
+    _deCtl.dispose();
+    super.dispose();
+  }
+
+  // ---------- Профілі ----------
+
+  Future<bool> _isCmykProfile(File f) async {
+    try {
+      final raf = await f.open();
+      try {
+        final h = await raf.read(20);
+        // байти 16..19 заголовка ICC — простір даних профілю
+        return h.length == 20 && String.fromCharCodes(h.sublist(16, 20)) == 'CMYK';
+      } finally {
+        await raf.close();
+      }
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _scanSystemProfiles() async {
+    final win = Platform.environment['WINDIR'] ?? r'C:\Windows';
+    final dir = Directory('$win\\System32\\spool\\drivers\\color');
+    final found = <String>[];
+    try {
+      if (await dir.exists()) {
+        await for (final e in dir.list()) {
+          if (e is! File) continue;
+          final l = e.path.toLowerCase();
+          if ((l.endsWith('.icc') || l.endsWith('.icm')) && await _isCmykProfile(e)) {
+            found.add(e.path);
+          }
+        }
+      }
+    } catch (_) {}
+    found.sort();
+    if (!mounted) return;
     setState(() {
-      _isCalculating = true;
-      _statusMessage = 'Виконується обчислення через LittleCMS...';
-    });
-
-    // Імітація FFI виклику (тут викликається виклики вашої cmyk_engine_c.h через Dart FFI)
-    await Future.delayed(const Duration(milliseconds: 300));
-
-    setState(() {
-      _isCalculating = false;
-      // Приклад знайденого результату із задіяним GCR
-      _resultRgb = const Color(0xFF1E2838); 
-      _statusMessage = 'Знайдено рішення: C:78% M:68% Y:22% K:64% (ΔE = 0.84, in Gamut)';
+      for (final p in found) {
+        if (!_profilePaths.contains(p)) _profilePaths.add(p);
+      }
     });
   }
+
+  Future<void> _browse() async {
+    final r = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['icc', 'icm'],
+    );
+    final p = r?.files.single.path;
+    if (p != null) _selectProfile(p);
+  }
+
+  void _selectProfile(String path) {
+    CmykEngine? eng;
+    String msg;
+    try {
+      eng = CmykEngine.open(path);
+      msg = 'Профіль завантажено: ${_baseName(path)}';
+    } on EngineException catch (e) {
+      msg = e.message;
+    }
+    setState(() {
+      if (eng != null) {
+        _engine?.close();
+        _engine = eng;
+        _profilePath = path;
+        if (!_profilePaths.contains(path)) _profilePaths.add(path);
+        _result = null;
+      }
+      _status = msg;
+    });
+  }
+
+  String _baseName(String p) => p.split(RegExp(r'[\\/]')).last;
+
+  // ---------- Розрахунок ----------
+
+  double? _num(String s) => double.tryParse(s.trim().replaceAll(',', '.'));
+
+  Future<void> _calculate() async {
+    final eng = _engine;
+    if (eng == null) {
+      setState(() => _status = 'Спершу оберіть CMYK-профіль.');
+      return;
+    }
+    final cmyk = <double>[];
+    for (var i = 0; i < 4; i++) {
+      final v = _num(_cmykCtl[i].text);
+      if (v == null || v < 0 || v > 100) {
+        setState(() => _status = 'Канал ${_names[i]}: введіть число від 0 до 100.');
+        return;
+      }
+      cmyk.add(v);
+    }
+    final de = _num(_deCtl.text);
+    if (de == null || de <= 0) {
+      setState(() => _status = 'Допуск ΔE: введіть додатне число.');
+      return;
+    }
+
+    setState(() {
+      _busy = true;
+      _status = 'Виконується пошук…';
+    });
+    try {
+      final r = await eng.search(cmyk: cmyk, maxInk: List.of(_limits), maxDeltaE: de);
+      if (!mounted) return;
+      setState(() {
+        _result = r;
+        _status = _describe(r, cmyk, de);
+      });
+    } on EngineException catch (e) {
+      if (mounted) setState(() => _status = e.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  String _fmt(List<double> v) =>
+      'C ${v[0].toStringAsFixed(1)}%  M ${v[1].toStringAsFixed(1)}%  '
+      'Y ${v[2].toStringAsFixed(1)}%  K ${v[3].toStringAsFixed(1)}%';
+
+  String _describe(SearchResult r, List<double> src, double tol) {
+    final srcInk = src.fold<double>(0, (a, b) => a + b);
+    final limits = [
+      for (var i = 0; i < 4; i++)
+        if (_limits[i] < 100) '${_names[i]} ≤ ${_limits[i].round()}%'
+    ];
+    return '${r.withinTolerance ? "ΔE у межах допуску" : "УВАГА: у межах допуску вкластися не вдалося — це найближчий результат"}\n'
+        'Вхід:      ${_fmt(src)}  (Σ ${srcInk.toStringAsFixed(0)}%)\n'
+        'Результат: ${_fmt(r.cmyk)}  (Σ ${r.totalInk.toStringAsFixed(0)}%)\n'
+        'ΔE2000 = ${r.deltaE.toStringAsFixed(2)}  (допуск ${tol.toStringAsFixed(2)})\n'
+        'Обмеження: ${limits.isEmpty ? "немає" : limits.join(", ")}';
+  }
+
+  // ---------- Інтерфейс ----------
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Smart CMYK Calculator'),
-        centerTitle: true,
-      ),
+      appBar: AppBar(title: const Text('Smart CMYK Calculator'), centerTitle: true),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16.0),
+          padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _buildProfileDropdown(),
+              _profileCard(),
               const SizedBox(height: 16),
-              _buildOriginalCmykInputs(),
+              _inputCard(),
               const SizedBox(height: 16),
-              _buildChannelLimitsSection(),
+              _limitsCard(),
               const SizedBox(height: 20),
-              _buildColorPreviewBox(),
+              _previewBox(),
               const SizedBox(height: 20),
-              _buildCalculateButton(),
+              ElevatedButton(
+                onPressed: _busy ? null : _calculate,
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  backgroundColor: const Color(0xFF00ACC1),
+                  foregroundColor: Colors.white,
+                ),
+                child: _busy
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Text('РОЗРАХУВАТИ',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              ),
               const SizedBox(height: 16),
-              _buildStatusMessageBox(),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.black26,
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: Colors.white12),
+                ),
+                child: SelectableText(
+                  _status,
+                  style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+                ),
+              ),
             ],
           ),
         ),
@@ -103,29 +259,44 @@ class _SmartCmykCalculatorScreenState extends State<SmartCmykCalculatorScreen> {
     );
   }
 
-  // 1. Dropdown вибору профілю
-  Widget _buildProfileDropdown() {
+  Widget _profileCard() {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
-        child: DropdownButtonHideUnderline(
-          child: DropdownButton<String>(
-            value: _selectedProfile,
-            isExpanded: true,
-            icon: const Icon(Icons.palette_outlined),
-            items: _profiles.map((p) => DropdownMenuItem(value: p, child: Text(p))).toList(),
-            onChanged: (val) => setState(() => _selectedProfile = val!),
-          ),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          children: [
+            Expanded(
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: _profilePath,
+                  isExpanded: true,
+                  hint: const Text('CMYK-профіль (системні)'),
+                  icon: const Icon(Icons.palette_outlined),
+                  items: [
+                    for (final p in _profilePaths)
+                      DropdownMenuItem(value: p, child: Text(_baseName(p))),
+                  ],
+                  onChanged: _busy ? null : (v) => v == null ? null : _selectProfile(v),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              onPressed: _busy ? null : _browse,
+              icon: const Icon(Icons.folder_open),
+              label: const Text('Файл…'),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  // 2. Вхідні CMYK + Delta E
-  Widget _buildOriginalCmykInputs() {
+  Widget _inputCard() {
+    const accents = [Colors.cyan, _magenta, Color(0xFFF9A825), Colors.grey];
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(12.0),
+        padding: const EdgeInsets.all(12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -133,154 +304,113 @@ class _SmartCmykCalculatorScreenState extends State<SmartCmykCalculatorScreen> {
             const SizedBox(height: 8),
             Row(
               children: [
-                _cmykInputField('C', _srcC, (v) => _srcC = v, Colors.cyan),
-                _cmykInputField('M', _srcM, (v) => _srcM = v, Colors.magenta),
-                _cmykInputField('Y', _srcY, (v) => _srcY = v, Colors.yellow.shade700),
-                _cmykInputField('K', _srcK, (v) => _srcK = v, Colors.grey),
+                for (var i = 0; i < 4; i++)
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: TextField(
+                        controller: _cmykCtl[i],
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
+                        decoration: InputDecoration(
+                          labelText: _names[i],
+                          labelStyle: TextStyle(color: accents[i], fontWeight: FontWeight.bold),
+                          border: const OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
             const Divider(height: 24),
             Row(
               children: [
-                const Text('Допуск похибки (ΔE):'),
+                const Text('Макс. допустима похибка (ΔE2000):'),
                 const SizedBox(width: 12),
                 SizedBox(
-                  width: 70,
+                  width: 80,
                   child: TextField(
-                    controller: TextEditingController(text: _deltaE.toString()),
+                    controller: _deCtl,
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
                     decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
-                    onChanged: (v) => _deltaE = double.tryParse(v) ?? 1.5,
                   ),
                 ),
               ],
-            )
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _cmykInputField(String label, double val, Function(double) onChanged, Color accent) {
-    return Expanded(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4.0),
-        child: TextField(
-          controller: TextEditingController(text: val.toInt().toString()),
-          keyboardType: TextInputType.number,
-          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-          decoration: InputDecoration(
-            labelText: label,
-            labelStyle: TextStyle(color: accent, fontWeight: FontWeight.bold),
-            border: const OutlineInputBorder(),
-            isDense: true,
-          ),
-          onChanged: (v) => onChanged(double.tryParse(v) ?? 0),
-        ),
-      ),
-    );
-  }
-
-  // 3. Канальні ліміти
-  Widget _buildChannelLimitsSection() {
+  Widget _limitsCard() {
+    const accents = [Colors.cyan, _magenta, Color(0xFFF9A825), Colors.grey];
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(12.0),
+        padding: const EdgeInsets.all(12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Канальні ліміти (100% = без обмежень)', style: TextStyle(fontWeight: FontWeight.bold)),
-            _channelSlider('Limit C', _limitC, (v) => setState(() => _limitC = v), Colors.cyan),
-            _channelSlider('Limit M', _limitM, (v) => setState(() => _limitM = v), Colors.magenta),
-            _channelSlider('Limit Y', _limitY, (v) => setState(() => _limitY = v), Colors.yellow.shade700),
-            _channelSlider('Limit K', _limitK, (v) => setState(() => _limitK = v), Colors.grey),
+            const Text('Максимум фарби по каналах (100% = без обмежень)',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+            for (var i = 0; i < 4; i++)
+              Row(
+                children: [
+                  SizedBox(
+                    width: 60,
+                    child: Text('Макс. ${_names[i]}',
+                        style: TextStyle(fontSize: 12, color: accents[i])),
+                  ),
+                  Expanded(
+                    child: Slider(
+                      value: _limits[i],
+                      min: 0,
+                      max: 100,
+                      divisions: 100,
+                      activeColor: accents[i],
+                      onChanged: (v) => setState(() => _limits[i] = v),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 44,
+                    child: Text('${_limits[i].round()}%', textAlign: TextAlign.right),
+                  ),
+                ],
+              ),
           ],
         ),
       ),
     );
   }
 
-  Widget _channelSlider(String label, double val, Function(double) onChanged, Color accent) {
-    return Row(
-      children: [
-        SizedBox(width: 60, child: Text(label, style: TextStyle(fontSize: 12, color: accent))),
-        Expanded(
-          child: Slider(
-            value: val,
-            min: 0,
-            max: 100,
-            activeColor: accent,
-            onChanged: onChanged,
-          ),
-        ),
-        SizedBox(width: 40, child: Text('${val.toInt()}%', textAlign: TextAlign.right)),
-      ],
-    );
-  }
+  Color _rgb(List<int> v) => Color.fromARGB(255, v[0], v[1], v[2]);
 
-  // 4. Порівняльне вікно (Сіре тло 35% + Концентричні квадрати)
-  Widget _buildColorPreviewBox() {
+  // Сіре тло + два концентричні квадрати: зовнішній — вхід, внутрішній — результат
+  Widget _previewBox() {
+    final r = _result;
     return Container(
       height: 180,
       decoration: BoxDecoration(
-        color: const Color(0xFF595959), // Нейтральне сіре тло ~35%
-        borderRadius: BorderRadius.circular(8.0),
+        color: _grey,
+        borderRadius: BorderRadius.circular(8),
         border: Border.all(color: Colors.white24),
       ),
       child: Center(
-        // Зовнішній квадрат: RGB початкового кольору
         child: Container(
           width: 130,
           height: 130,
-          color: _originalRgb,
+          color: r == null ? _grey : _rgb(r.rgbIn),
           child: Center(
-            // Внутрішній квадрат: До розрахунку сірий, після — RGB результату
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 300),
               width: 65,
               height: 65,
-              color: _resultRgb ?? const Color(0xFF595959),
-              child: _resultRgb == null
-                  ? const Center(child: Text('Grey', style: TextStyle(fontSize: 10, color: Colors.white54)))
-                  : null,
+              color: r == null ? _grey : _rgb(r.rgbOut),
             ),
           ),
         ),
-      ),
-    );
-  }
-
-  // 5. Кнопка Розрахувати
-  Widget _buildCalculateButton() {
-    return ElevatedButton(
-      onPressed: _isCalculating ? null : _onCalculate,
-      style: ElevatedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(vertical: 16.0),
-        backgroundColor: const Color(0xFF00ACC1),
-        foregroundColor: Colors.white,
-      ),
-      child: _isCalculating
-          ? const SizedBox(
-              height: 20,
-              width: 20,
-              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-            )
-          : const Text('РОЗРАХУВАТИ', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-    );
-  }
-
-  // 6. Поле повідомлень
-  Widget _buildStatusMessageBox() {
-    return Container(
-      padding: const EdgeInsets.all(12.0),
-      decoration: BoxDecoration(
-        color: Colors.black26,
-        borderRadius: BorderRadius.circular(6.0),
-        border: Border.all(color: Colors.white12),
-      ),
-      child: Text(
-        _statusMessage,
-        style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
       ),
     );
   }
