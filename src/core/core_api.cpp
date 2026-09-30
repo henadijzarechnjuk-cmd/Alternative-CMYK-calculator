@@ -43,17 +43,16 @@ std::vector<CMYKCandidate> findAlternativeCMYK(
         hProfile, TYPE_CMYK_DBL,
         INTENT_RELATIVE_COLORIMETRIC, cmsFLAGS_NOCACHE
     );
-
-    // 3. Створюємо детектор Gamut (Gamut Check)
-    cmsHPROFILE hProfiles[2] = { cmsCreateLab4Profile(NULL), hProfile };
-    cmsHTRANSFORM hTransform = cmsCreateTransform(
-        hInputProfile,
-        TYPE_CMYK_FLT, // або TYPE_CMYK_16 / TYPE_CMYK_8 залежно від формату
-        hOutputProfile,
-        TYPE_RGB_8,
-        INTENT_PERCEPTUAL,
-        0
-    );
+    
+// Замість cmsCreateTransformEx використовуйте cmsCreateTransform:
+cmsHTRANSFORM hTransform = cmsCreateTransform(
+    hInputProfile,
+    TYPE_CMYK_FLT,     // Або ваш формат (наприклад, TYPE_CMYK_16)
+    hOutputProfile,
+    TYPE_Lab_FLT,      // Або TYPE_RGB_8 / TYPE_Lab_DBL
+    INTENT_RELATIVE_COLORIMETRIC,
+    cmsFLAGS_NOCACHE
+);
 
     if (!hCMYK2Lab || !hLab2CMYK || !hGamutCheck) {
         std::cerr << "Помилка створення трансформацій LittleCMS!" << std::endl;
