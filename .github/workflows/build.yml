@@ -11,7 +11,7 @@ env:
   # Папка, де лежать pubspec.yaml і windows/ ("." = корінь репозиторію)
   FLUTTER_PROJECT_DIR: "."
   # Точка входу Flutter відносно FLUTTER_PROJECT_DIR (якщо main.dart у lib/ — "lib/main.dart")
-  FLUTTER_TARGET: "src/ui/main.dart"
+  FLUTTER_TARGET: "lib/main.dart"
 
 jobs:
   build:

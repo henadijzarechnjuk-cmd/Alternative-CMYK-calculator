@@ -111,14 +111,15 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
     });
   }
 
-  Future<void> _browse() async {
-    final r = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['icc', 'icm'],
-    );
-    final p = r?.files.single.path;
-    if (p != null) _selectProfile(p);
-  }
+Future<void> _browse() async {
+  final files = await FilePicker.pickFiles(
+    type: FileType.custom,
+    allowedExtensions: ['icc', 'icm'],
+  );
+  if (files.isEmpty) return; // діалог закрито без вибору
+  final p = files.first.path;
+  if (p != null) _selectProfile(p);
+}
 
   void _selectProfile(String path) {
     CmykEngine? eng;
