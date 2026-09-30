@@ -79,13 +79,28 @@ jobs:
       working-directory: ${{ env.FLUTTER_PROJECT_DIR }}
       run: flutter build windows --release -t ${{ env.FLUTTER_TARGET }}
 
-    # 10. cmyk_engine.dll і lcms2.dll поруч з .exe (падає, якщо чогось немає)
+    # 10. cmyk_engine.dll і lcms DLL поруч з .exe
     - name: Copy DLLs to Release
-      shell: cmd
+      shell: pwsh
       run: |
-        set REL=%FLUTTER_PROJECT_DIR%\build\windows\x64\runner\Release
-        copy /Y cmyk_engine.dll "%REL%\" || exit /b 1
-        copy /Y "%VCPKG_INSTALLATION_ROOT%\installed\x64-windows\bin\lcms2.dll" "%REL%\" || exit /b 1
+        $rel = Join-Path $env:FLUTTER_PROJECT_DIR 'build/windows/x64/runner/Release'
+        Write-Host "Release dir: $rel"
+        if (-not (Test-Path $rel)) {
+          Write-Host "Release dir not found. Contents of build/windows:"
+          Get-ChildItem -Recurse -Depth 4 (Join-Path $env:FLUTTER_PROJECT_DIR 'build/windows') | Select-Object -ExpandProperty FullName
+          exit 1
+        }
+        Copy-Item cmyk_engine.dll $rel -Force
+        $bin = Join-Path $env:VCPKG_INSTALLATION_ROOT 'installed/x64-windows/bin'
+        $lcms = Get-ChildItem $bin -Filter 'lcms*.dll'
+        if (-not $lcms) {
+          Write-Host "No lcms DLL in $bin. Contents:"
+          Get-ChildItem $bin | Select-Object -ExpandProperty Name
+          exit 1
+        }
+        $lcms | ForEach-Object { Copy-Item $_.FullName $rel -Force; Write-Host "Copied $($_.Name)" }
+        Write-Host "DLLs in Release:"
+        Get-ChildItem $rel -Filter *.dll | Select-Object -ExpandProperty Name
 
     # 11. Готова збірка в Artifacts
     - name: Upload Build Artifacts
