@@ -46,12 +46,13 @@ std::vector<CMYKCandidate> findAlternativeCMYK(
 
     // 3. Створюємо детектор Gamut (Gamut Check)
     cmsHPROFILE hProfiles[2] = { cmsCreateLab4Profile(NULL), hProfile };
-    cmsHTRANSFORM hGamutCheck = cmsCreateTransformEx(
-        cmsCreateLab4Profile(NULL), TYPE_Lab_DBL,
-        hProfile, TYPE_CMYK_DBL,
-        INTENT_RELATIVE_COLORIMETRIC, 
-        INTENT_RELATIVE_COLORIMETRIC, 
-        cmsFLAGS_GAMUTCHECK, hProfiles
+    cmsHTRANSFORM hTransform = cmsCreateTransform(
+        hInputProfile,
+        TYPE_CMYK_FLT, // або TYPE_CMYK_16 / TYPE_CMYK_8 залежно від формату
+        hOutputProfile,
+        TYPE_RGB_8,
+        INTENT_PERCEPTUAL,
+        0
     );
 
     if (!hCMYK2Lab || !hLab2CMYK || !hGamutCheck) {
@@ -86,7 +87,7 @@ std::vector<CMYKCandidate> findAlternativeCMYK(
         }
 
         // Б. Перевірка на входження в колірне охоплення (Gamut Check)
-        cmsWORD inGamutFlag = 0;
+        cmsUInt16Number inGamutFlag = 0;
         cmsDoTransform(hGamutCheck, &targetLab, &inGamutFlag, 1);
         bool isInGamut = (inGamutFlag == 0); // 0 означає, що точка в межах охоплення
 
