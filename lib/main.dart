@@ -10,8 +10,16 @@ import 'package:window_manager/window_manager.dart';
 import 'cmyk_engine.dart';
 import 'settings.dart';
 
-const _defaultSize = Size(560, 960);
+// ---- Розміри інтерфейсу: усе, що впливає на висоту вікна, налаштовується тут ----
+const _defaultSize = Size(560, 980); // розмір вікна при першому запуску
 const _minSize = Size(480, 640);
+const double _pagePad = 12; // зовнішній відступ сторінки
+const double _gap = 8; // проміжок між картками
+const double _cardPad = 10; // внутрішній відступ карток
+const double _dividerH = 16; // висота роздільників у картках
+const double _previewH = 150; // висота сірого вікна порівняння
+const double _outerSq = 112; // зовнішній квадрат (вхід)
+const double _innerSq = 56; // внутрішній квадрат (результат)
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -68,6 +76,7 @@ class SmartCmykApp extends StatelessWidget {
           brightness: Brightness.dark,
         ),
         useMaterial3: true,
+        cardTheme: const CardThemeData(margin: EdgeInsets.zero),
       ),
       home: CalculatorScreen(settings: settings),
     );
@@ -319,7 +328,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> with WindowListener
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
-        toolbarHeight: 68,
+        toolbarHeight: 60,
         centerTitle: true,
         title: Column(
           mainAxisSize: MainAxisSize.min,
@@ -334,22 +343,22 @@ class _CalculatorScreenState extends State<CalculatorScreen> with WindowListener
       ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(_pagePad),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               _profileCard(),
-              const SizedBox(height: 16),
+              const SizedBox(height: _gap),
               _inputCard(),
-              const SizedBox(height: 16),
+              const SizedBox(height: _gap),
               _limitsCard(),
-              const SizedBox(height: 20),
+              const SizedBox(height: _gap),
               _previewBox(),
-              const SizedBox(height: 20),
+              const SizedBox(height: _gap),
               ElevatedButton(
                 onPressed: _busy ? null : _calculate,
                 style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
                   backgroundColor: const Color(0xFF00ACC1),
                   foregroundColor: Colors.white,
                 ),
@@ -362,11 +371,11 @@ class _CalculatorScreenState extends State<CalculatorScreen> with WindowListener
                     : const Text('РОЗРАХУВАТИ',
                         style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: _gap),
               _resultCard(),
-              const SizedBox(height: 16),
+              const SizedBox(height: _gap),
               Container(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.all(_cardPad),
                 decoration: BoxDecoration(
                   color: Colors.black26,
                   borderRadius: BorderRadius.circular(6),
@@ -388,7 +397,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> with WindowListener
     final locked = _busy || _pickerOpen;
     return Card(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         child: Row(
           children: [
             Expanded(
@@ -421,7 +430,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> with WindowListener
   Widget _inputCard() {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(_cardPad),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -448,7 +457,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> with WindowListener
                   ),
               ],
             ),
-            const Divider(height: 24),
+            const Divider(height: _dividerH),
             Row(
               children: [
                 const Text('Макс. допустима похибка (ΔE2000):'),
@@ -477,7 +486,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> with WindowListener
     final ok = r?.withinTolerance ?? false;
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(_cardPad),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -505,7 +514,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> with WindowListener
                   ),
               ],
             ),
-            const Divider(height: 24),
+            const Divider(height: _dividerH),
             Row(
               children: [
                 const Text('Досягнута похибка (ΔE2000):'),
@@ -551,7 +560,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> with WindowListener
   Widget _limitsCard() {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(_cardPad),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -566,16 +575,19 @@ class _CalculatorScreenState extends State<CalculatorScreen> with WindowListener
                         style: TextStyle(fontSize: 12, color: _accents[i])),
                   ),
                   Expanded(
-                    child: Slider(
-                      value: _limits[i],
-                      min: 0,
-                      max: 100,
-                      divisions: 100,
-                      activeColor: _accents[i],
-                      onChanged: (v) {
-                        setState(() => _limits[i] = v);
-                        _scheduleSave();
-                      },
+                    child: SliderTheme(
+                      data: _compactSliderTheme(context),
+                      child: Slider(
+                        value: _limits[i],
+                        min: 0,
+                        max: 100,
+                        divisions: 100,
+                        activeColor: _accents[i],
+                        onChanged: (v) {
+                          setState(() => _limits[i] = v);
+                          _scheduleSave();
+                        },
+                      ),
                     ),
                   ),
                   SizedBox(
@@ -590,13 +602,20 @@ class _CalculatorScreenState extends State<CalculatorScreen> with WindowListener
     );
   }
 
+  // Менша «зона дотику» повзунка: рядок займає ~24 px замість 48
+  SliderThemeData _compactSliderTheme(BuildContext context) =>
+      SliderTheme.of(context).copyWith(
+        trackHeight: 3,
+        overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+      );
+
   Color _rgb(List<int> v) => Color.fromARGB(255, v[0], v[1], v[2]);
 
   // Сіре тло + два концентричні квадрати: зовнішній — вхід, внутрішній — результат
   Widget _previewBox() {
     final r = _result;
     return Container(
-      height: 180,
+      height: _previewH,
       decoration: BoxDecoration(
         color: _grey,
         borderRadius: BorderRadius.circular(8),
@@ -604,14 +623,14 @@ class _CalculatorScreenState extends State<CalculatorScreen> with WindowListener
       ),
       child: Center(
         child: Container(
-          width: 130,
-          height: 130,
+          width: _outerSq,
+          height: _outerSq,
           color: r == null ? _grey : _rgb(r.rgbIn),
           child: Center(
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 300),
-              width: 65,
-              height: 65,
+              width: _innerSq,
+              height: _innerSq,
               color: r == null ? _grey : _rgb(r.rgbOut),
             ),
           ),
