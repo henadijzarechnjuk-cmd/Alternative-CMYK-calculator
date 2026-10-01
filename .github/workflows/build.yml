@@ -7,6 +7,11 @@ on:
   pull_request:
     branches: [ "main" ]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Тег існуючого релізу, до якого прикріпити збірку (напр. 1.0.0). Порожньо = лише збірка"
+        required: false
+        default: ""
 
 permissions:
   contents: write   # потрібно лише для публікації Release
@@ -113,18 +118,42 @@ jobs:
         name: Alternative-CMYK-Calculator-Windows
         path: ${{ env.FLUTTER_PROJECT_DIR }}/build/windows/x64/runner/Release/
 
-    # 12. Лише для тегів виду v*: архів і публічний GitHub Release
+    # 12. Публікація в GitHub Release: за тегом v* або вручну (Run workflow + тег існуючого релізу)
+    - name: Resolve release tag
+      shell: pwsh
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        REF_TYPE: ${{ github.ref_type }}
+        REF_NAME: ${{ github.ref_name }}
+        INPUT_TAG: ${{ inputs.release_tag }}
+      run: |
+        $tag = ""
+        if ($env:REF_TYPE -eq "tag" -and $env:REF_NAME.StartsWith("v")) { $tag = $env:REF_NAME }
+        elseif ($env:EVENT_NAME -eq "workflow_dispatch") { $tag = ($env:INPUT_TAG).Trim() }
+        "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        Write-Host "Release tag: '$tag'"
+
     - name: Zip release
-      if: startsWith(github.ref, 'refs/tags/v')
+      if: env.RELEASE_TAG != ''
       shell: pwsh
       run: |
-        $zip = "Alternative-CMYK-Calculator-${{ github.ref_name }}-windows-x64.zip"
+        $zip = "Alternative-CMYK-Calculator-$($env:RELEASE_TAG)-windows-x64.zip"
         Compress-Archive -Path "$env:FLUTTER_PROJECT_DIR/build/windows/x64/runner/Release/*" -DestinationPath $zip
         "ZIP_NAME=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
     - name: Publish GitHub Release
-      if: startsWith(github.ref, 'refs/tags/v')
+      if: env.RELEASE_TAG != ''
       shell: pwsh
       env:
         GH_TOKEN: ${{ github.token }}
-      run: gh release create "${{ github.ref_name }}" $env:ZIP_NAME --title "${{ github.ref_name }}" --generate-notes
+      run: |
+        $tag = $env:RELEASE_TAG
+        gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+        if ($LASTEXITCODE -eq 0) {
+          Write-Host "Release $tag exists: uploading asset"
+          gh release upload $tag $env:ZIP_NAME --clobber --repo $env:GITHUB_REPOSITORY
+        } else {
+          Write-Host "Release $tag not found: creating"
+          gh release create $tag $env:ZIP_NAME --title $tag --generate-notes --repo $env:GITHUB_REPOSITORY
+        }
+        if ($LASTEXITCODE -ne 0) { exit 1 }
