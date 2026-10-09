@@ -7,9 +7,13 @@ class AppSettings {
   Offset? windowPos;
   Size? windowSize;
   String? profilePath;
+  bool inputRgb = false; // остання вкладка входу: false = CMYK, true = RGB
   List<double> cmyk = [90, 80, 30, 50];
+  List<double> rgb = [40, 60, 120];
   double deltaE = 2.0;
   List<double> limits = [100, 100, 100, 100];
+  bool roundResult = false; // «Заокруглювати до цілих %»
+  bool minInk = false; // «Мінімальна сума фарб»
 
   static File get _file {
     final appData = Platform.environment['APPDATA'];
@@ -26,7 +30,7 @@ class AppSettings {
     return [for (final v in parts) v!];
   }
 
-  static bool _percents(List<double> v) => v.every((x) => x >= 0 && x <= 100);
+  static bool _inRange(List<double> v, double max) => v.every((x) => x >= 0 && x <= max);
 
   static Future<AppSettings> load() async {
     final s = AppSettings();
@@ -59,14 +63,22 @@ class AppSettings {
       final profile = map['Profile.LastChoosedColorProfile'];
       if (profile != null && profile.isNotEmpty) s.profilePath = profile;
 
+      s.inputRgb = (map['Color.LastInputMode'] ?? '').toUpperCase() == 'RGB';
+
       final color = _nums(map['Color.LastUsedColor'], 4);
-      if (color != null && _percents(color)) s.cmyk = color;
+      if (color != null && _inRange(color, 100)) s.cmyk = color;
+
+      final rgb = _nums(map['Color.LastUsedRgb'], 3);
+      if (rgb != null && _inRange(rgb, 255)) s.rgb = rgb;
 
       final de = double.tryParse(map['Color.MaxDeltaE'] ?? '');
       if (de != null && de > 0) s.deltaE = de;
 
       final lim = _nums(map['Color.ChannelLimits'], 4);
-      if (lim != null && _percents(lim)) s.limits = lim;
+      if (lim != null && _inRange(lim, 100)) s.limits = lim;
+
+      s.roundResult = map['Options.RoundToWholePercent'] == '1';
+      s.minInk = map['Options.MinimalInkSum'] == '1';
     } catch (_) {
       // пошкоджений файл не повинен заважати запуску — лишаються значення за замовчуванням
     }
@@ -97,9 +109,15 @@ class AppSettings {
       b
         ..writeln()
         ..writeln('[Color]')
+        ..writeln('LastInputMode=${inputRgb ? 'RGB' : 'CMYK'}')
         ..writeln('LastUsedColor=${_list(cmyk)}')
+        ..writeln('LastUsedRgb=${_list(rgb)}')
         ..writeln('MaxDeltaE=${_n(deltaE)}')
-        ..writeln('ChannelLimits=${_list(limits)}');
+        ..writeln('ChannelLimits=${_list(limits)}')
+        ..writeln()
+        ..writeln('[Options]')
+        ..writeln('RoundToWholePercent=${roundResult ? 1 : 0}')
+        ..writeln('MinimalInkSum=${minInk ? 1 : 0}');
       await f.writeAsString(b.toString());
     } catch (_) {
       // збій запису налаштувань не критичний

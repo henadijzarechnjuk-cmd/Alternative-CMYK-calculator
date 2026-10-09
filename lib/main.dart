@@ -11,15 +11,18 @@ import 'cmyk_engine.dart';
 import 'settings.dart';
 
 // ---- Розміри інтерфейсу: усе, що впливає на висоту вікна, налаштовується тут ----
-const _defaultSize = Size(560, 980); // розмір вікна при першому запуску
+const _defaultSize = Size(560, 1000); // розмір вікна при першому запуску
 const _minSize = Size(480, 640);
 const double _pagePad = 12; // зовнішній відступ сторінки
 const double _gap = 8; // проміжок між картками
 const double _cardPad = 10; // внутрішній відступ карток
 const double _dividerH = 16; // висота роздільників у картках
-const double _previewH = 150; // висота сірого вікна порівняння
+const double _previewH = 140; // висота сірого вікна порівняння
 const double _outerSq = 112; // зовнішній квадрат (вхід)
 const double _innerSq = 56; // внутрішній квадрат (результат)
+const double _tabH = 32; // висота вкладок CMYK / RGB
+const double _btnW = 176; // ширина кнопки «Розрахувати» (фіксована)
+const double _btnH = 48; // висота кнопки «Розрахувати»
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -44,7 +47,7 @@ Future<void> main() async {
     },
   );
 
-  runApp(SmartCmykApp(settings: settings));
+  runApp(AlternativeCmykApp(settings: settings));
 }
 
 /// Чи потрапляє смуга заголовка збереженого вікна на якийсь із поточних моніторів
@@ -61,9 +64,9 @@ Future<bool> _isOnScreen(Offset pos) async {
   return false;
 }
 
-class SmartCmykApp extends StatelessWidget {
+class AlternativeCmykApp extends StatelessWidget {
   final AppSettings settings;
-  const SmartCmykApp({super.key, required this.settings});
+  const AlternativeCmykApp({super.key, required this.settings});
 
   @override
   Widget build(BuildContext context) {
@@ -91,17 +94,25 @@ class CalculatorScreen extends StatefulWidget {
   State<CalculatorScreen> createState() => _CalculatorScreenState();
 }
 
-class _CalculatorScreenState extends State<CalculatorScreen> with WindowListener {
+class _CalculatorScreenState extends State<CalculatorScreen>
+    with WindowListener, SingleTickerProviderStateMixin {
   static const _magenta = Color(0xFFE91E8C);
   static const _grey = Color(0xFF595959);
   static const _names = ['C', 'M', 'Y', 'K'];
+  static const _rgbNames = ['R', 'G', 'B'];
   static const _accents = [Colors.cyan, _magenta, Color(0xFFF9A825), Colors.grey];
+  static const _rgbAccents = [Colors.redAccent, Colors.greenAccent, Colors.lightBlueAccent];
 
   late final AppSettings _s = widget.settings;
 
   late final List<TextEditingController> _cmykCtl = [
     for (final v in _s.cmyk) TextEditingController(text: _fmtNum(v))
   ];
+  late final List<TextEditingController> _rgbCtl = [
+    for (final v in _s.rgb) TextEditingController(text: _fmtNum(v))
+  ];
+  late final TabController _tabs =
+      TabController(length: 2, vsync: this, initialIndex: _s.inputRgb ? 1 : 0);
   late final TextEditingController _deCtl = TextEditingController(text: _fmtNum(_s.deltaE));
   late final List<double> _limits = List.of(_s.limits);
 
@@ -110,7 +121,10 @@ class _CalculatorScreenState extends State<CalculatorScreen> with WindowListener
   CmykEngine? _engine;
 
   SearchResult? _result;
-  double _srcInk = 0;
+  String _srcLabel = ''; // підпис входу для рядка «Σ фарб»
+  bool _lastRound = false; // чи був останній розрахунок із цілими відсотками
+  late bool _round = _s.roundResult; // «Заокруглювати до цілих %»
+  late bool _minInk = _s.minInk; // «Мінімальна сума фарб»
   String _status = 'Оберіть CMYK-профіль, задайте параметри й натисніть «Розрахувати».';
   bool _busy = false;
   bool _pickerOpen = false;
@@ -120,10 +134,15 @@ class _CalculatorScreenState extends State<CalculatorScreen> with WindowListener
   void initState() {
     super.initState();
     windowManager.addListener(this);
-    for (final c in _cmykCtl) {
+    for (final c in [..._cmykCtl, ..._rgbCtl]) {
       c.addListener(_scheduleSave);
     }
     _deCtl.addListener(_scheduleSave);
+    _tabs.addListener(() {
+      if (!mounted) return;
+      setState(() {}); // перемалювати поля вибраної вкладки
+      _scheduleSave();
+    });
     _scanSystemProfiles();
     WidgetsBinding.instance.addPostFrameCallback((_) => _restoreProfile());
   }
@@ -133,10 +152,11 @@ class _CalculatorScreenState extends State<CalculatorScreen> with WindowListener
     windowManager.removeListener(this);
     _saveTimer?.cancel();
     _engine?.close();
-    for (final c in _cmykCtl) {
+    for (final c in [..._cmykCtl, ..._rgbCtl]) {
       c.dispose();
     }
     _deCtl.dispose();
+    _tabs.dispose();
     super.dispose();
   }
 
@@ -154,9 +174,16 @@ class _CalculatorScreenState extends State<CalculatorScreen> with WindowListener
     if (cmyk.every((v) => v != null && v >= 0 && v <= 100)) {
       _s.cmyk = [for (final v in cmyk) v!];
     }
+    final rgb = [for (final c in _rgbCtl) _num(c.text)];
+    if (rgb.every((v) => v != null && v >= 0 && v <= 255)) {
+      _s.rgb = [for (final v in rgb) v!];
+    }
+    _s.inputRgb = _tabs.index == 1;
     final de = _num(_deCtl.text);
     if (de != null && de > 0) _s.deltaE = de;
     _s.limits = List.of(_limits);
+    _s.roundResult = _round;
+    _s.minInk = _minInk;
     _s.profilePath = _profilePath;
     await _s.save();
   }
@@ -275,14 +302,26 @@ class _CalculatorScreenState extends State<CalculatorScreen> with WindowListener
       setState(() => _status = 'Спершу оберіть CMYK-профіль.');
       return;
     }
-    final cmyk = <double>[];
-    for (var i = 0; i < 4; i++) {
-      final v = _num(_cmykCtl[i].text);
-      if (v == null || v < 0 || v > 100) {
-        setState(() => _status = 'Канал ${_names[i]}: введіть число від 0 до 100.');
-        return;
+    final rgbMode = _tabs.index == 1;
+    final input = <double>[];
+    if (rgbMode) {
+      for (var i = 0; i < 3; i++) {
+        final v = _num(_rgbCtl[i].text);
+        if (v == null || v < 0 || v > 255) {
+          setState(() => _status = 'Канал ${_rgbNames[i]}: введіть число від 0 до 255.');
+          return;
+        }
+        input.add(v);
       }
-      cmyk.add(v);
+    } else {
+      for (var i = 0; i < 4; i++) {
+        final v = _num(_cmykCtl[i].text);
+        if (v == null || v < 0 || v > 100) {
+          setState(() => _status = 'Канал ${_names[i]}: введіть число від 0 до 100.');
+          return;
+        }
+        input.add(v);
+      }
     }
     final de = _num(_deCtl.text);
     if (de == null || de <= 0) {
@@ -290,17 +329,29 @@ class _CalculatorScreenState extends State<CalculatorScreen> with WindowListener
       return;
     }
 
+    final roundInt = _round;
+    final minInk = _minInk;
     setState(() {
       _busy = true;
       _status = 'Виконується пошук…';
     });
     try {
-      final r = await eng.search(cmyk: cmyk, maxInk: List.of(_limits), maxDeltaE: de);
+      final r = await eng.search(
+        mode: rgbMode ? InputMode.rgb : InputMode.cmyk,
+        input: input,
+        maxInk: List.of(_limits),
+        maxDeltaE: de,
+        roundToInt: roundInt,
+        minInk: minInk,
+      );
       if (!mounted) return;
       setState(() {
         _result = r;
-        _srcInk = cmyk.fold<double>(0, (a, b) => a + b);
-        _status = _describe(r);
+        _lastRound = roundInt;
+        _srcLabel = rgbMode
+            ? 'вхід RGB ${input.map((v) => v.round()).join(', ')}'
+            : 'вхід ${input.fold<double>(0, (a, b) => a + b).round()}%';
+        _status = _describe(r, rgbMode: rgbMode, minInk: minInk, roundInt: roundInt, tol: de);
       });
       _saveNow();
     } on EngineException catch (e) {
@@ -310,15 +361,28 @@ class _CalculatorScreenState extends State<CalculatorScreen> with WindowListener
     }
   }
 
-  String _describe(SearchResult r) {
+  String _describe(SearchResult r,
+      {required bool rgbMode,
+      required bool minInk,
+      required bool roundInt,
+      required double tol}) {
     final limits = [
       for (var i = 0; i < 4; i++)
         if (_limits[i] < 100) '${_names[i]} ≤ ${_limits[i].round()}%'
     ];
-    final head = r.withinTolerance
-        ? 'Готово: ΔE у межах допуску.'
-        : 'УВАГА: у межах допуску вкластися не вдалося, показано найближчий результат.';
-    return '$head\nОбмеження: ${limits.isEmpty ? "немає" : limits.join(", ")}';
+    final String head;
+    if (r.withinTolerance) {
+      head = minInk
+          ? 'Готово: мінімальна сума фарб у межах ΔE ≤ ${_fmtNum(tol)}.'
+          : 'Готово: ΔE у межах допуску.';
+    } else if (rgbMode) {
+      head = 'УВАГА: колір поза охопленням профілю (або обмежень), показано найближчий друкований результат.';
+    } else {
+      head = 'УВАГА: у межах допуску вкластися не вдалося, показано найближчий результат.';
+    }
+    return '$head\n'
+        'Обмеження: ${limits.isEmpty ? "немає" : limits.join(", ")}'
+        '${roundInt ? "\nЗаокруглено до цілих %." : ""}';
   }
 
   // ---------- Інтерфейс ----------
@@ -333,7 +397,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> with WindowListener
         title: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('Smart CMYK Calculator'),
+            const Text('Alternative CMYK Calculator'),
             Text(
               'алгоритм Нелдера-Міда',
               style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
@@ -355,22 +419,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> with WindowListener
               const SizedBox(height: _gap),
               _previewBox(),
               const SizedBox(height: _gap),
-              ElevatedButton(
-                onPressed: _busy ? null : _calculate,
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  backgroundColor: const Color(0xFF00ACC1),
-                  foregroundColor: Colors.white,
-                ),
-                child: _busy
-                    ? const SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                      )
-                    : const Text('РОЗРАХУВАТИ',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              ),
+              _actionRow(),
               const SizedBox(height: _gap),
               _resultCard(),
               const SizedBox(height: _gap),
@@ -427,35 +476,65 @@ class _CalculatorScreenState extends State<CalculatorScreen> with WindowListener
     );
   }
 
+  Widget _numField(TextEditingController ctl, String label, Color accent, {String? suffix}) {
+    return Expanded(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: TextField(
+          controller: ctl,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
+          decoration: InputDecoration(
+            labelText: label,
+            labelStyle: TextStyle(color: accent, fontWeight: FontWeight.bold),
+            suffixText: suffix,
+            border: const OutlineInputBorder(),
+            isDense: true,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _inputCard() {
+    final rgbMode = _tabs.index == 1;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(_cardPad),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Вхідний колір (CMYK %)', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
             Row(
               children: [
-                for (var i = 0; i < 4; i++)
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      child: TextField(
-                        controller: _cmykCtl[i],
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
-                        decoration: InputDecoration(
-                          labelText: _names[i],
-                          labelStyle: TextStyle(color: _accents[i], fontWeight: FontWeight.bold),
-                          border: const OutlineInputBorder(),
-                          isDense: true,
-                        ),
-                      ),
-                    ),
+                const Text('Вхідний колір', style: TextStyle(fontWeight: FontWeight.bold)),
+                const Spacer(),
+                SizedBox(
+                  width: 170,
+                  child: TabBar(
+                    controller: _tabs,
+                    dividerHeight: 0,
+                    indicatorSize: TabBarIndicatorSize.tab,
+                    labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    unselectedLabelStyle: const TextStyle(fontSize: 13),
+                    tabs: const [
+                      Tab(text: 'CMYK', height: _tabH),
+                      Tab(text: 'RGB', height: _tabH),
+                    ],
                   ),
+                ),
               ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: rgbMode
+                  ? [
+                      for (var i = 0; i < 3; i++)
+                        _numField(_rgbCtl[i], _rgbNames[i], _rgbAccents[i]),
+                    ]
+                  : [
+                      for (var i = 0; i < 4; i++)
+                        _numField(_cmykCtl[i], _names[i], _accents[i], suffix: '%'),
+                    ],
             ),
             const Divider(height: _dividerH),
             Row(
@@ -474,6 +553,95 @@ class _CalculatorScreenState extends State<CalculatorScreen> with WindowListener
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  // Чекбокси зліва, кнопка фіксованого розміру справа
+  Widget _actionRow() {
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _check(
+                'Заокруглювати до цілих %',
+                'Результат — цілі відсотки. Не просте округлення: перебираються цілі сусіди оптимуму.',
+                _round,
+                (v) {
+                  setState(() => _round = v);
+                  _scheduleSave();
+                },
+              ),
+              _check(
+                'Мінімальна сума фарб',
+                'Серед усіх варіантів у межах допуску ΔE обирається той, що має найменшу суму фарб.',
+                _minInk,
+                (v) {
+                  setState(() => _minInk = v);
+                  _scheduleSave();
+                },
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 12),
+        SizedBox(
+          width: _btnW,
+          height: _btnH,
+          child: ElevatedButton(
+            onPressed: _busy ? null : _calculate,
+            style: ElevatedButton.styleFrom(
+              padding: EdgeInsets.zero,
+              backgroundColor: const Color(0xFF00ACC1),
+              foregroundColor: Colors.white,
+            ),
+            child: _busy
+                ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  )
+                : const Text('РОЗРАХУВАТИ',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _check(String label, String tip, bool value, ValueChanged<bool> onChanged) {
+    return Tooltip(
+      message: tip,
+      waitDuration: const Duration(milliseconds: 600),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(4),
+        onTap: _busy ? null : () => onChanged(!value),
+        child: SizedBox(
+          height: 26,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 24,
+                height: 24,
+                child: Checkbox(
+                  value: value,
+                  onChanged: _busy ? null : (v) => onChanged(v ?? false),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(label,
+                    style: const TextStyle(fontSize: 13), overflow: TextOverflow.ellipsis),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -506,7 +674,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> with WindowListener
                           isDense: true,
                         ),
                         child: SelectableText(
-                          r == null ? '—' : r.cmyk[i].toStringAsFixed(1),
+                          r == null ? '—' : r.cmyk[i].toStringAsFixed(_lastRound ? 0 : 1),
                           style: valueStyle,
                         ),
                       ),
@@ -547,7 +715,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> with WindowListener
               Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: Text(
-                  'Σ фарб: ${r.totalInk.round()}% (вхід ${_srcInk.round()}%)',
+                  'Σ фарб: ${r.totalInk.round()}% ($_srcLabel)',
                   style: const TextStyle(fontSize: 12, color: Colors.white70),
                 ),
               ),
