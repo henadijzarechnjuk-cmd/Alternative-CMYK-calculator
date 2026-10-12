@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Тег існуючого релізу, до якого прикріпити збірку (напр. 1.0.0). Порожньо = лише збірка"
+        description: "Тег існуючого релізу, до якого прикріпити збірку (напр. 1.1.0). Порожньо = лише збірка"
         required: false
         default: ""
 
@@ -19,7 +19,7 @@ permissions:
 env:
   # Папка, де лежать pubspec.yaml і windows/ ("." = корінь репозиторію)
   FLUTTER_PROJECT_DIR: "."
-  # Точка входу Flutter відносно FLUTTER_PROJECT_DIR (Flutter за замовчуванням — "lib/main.dart")
+  # Точка входу Flutter відносно FLUTTER_PROJECT_DIR
   FLUTTER_TARGET: "lib/main.dart"
 
 jobs:
@@ -55,8 +55,7 @@ jobs:
       run: |
         dumpbin /exports cmyk_engine.dll | findstr /C:"engine_create" || exit /b 1
         dumpbin /exports cmyk_engine.dll | findstr /C:"engine_destroy" || exit /b 1
-        dumpbin /exports cmyk_engine.dll | findstr /C:"engine_search" || exit /b 1
-	      dumpbin /exports cmyk_engine.dll | findstr /C:"engine_search_ex" || exit /b 1
+        dumpbin /exports cmyk_engine.dll | findstr /C:"engine_search_ex" || exit /b 1
 
     # 6. Налаштування Flutter SDK
     - name: Set up Flutter SDK
@@ -65,17 +64,17 @@ jobs:
         channel: 'stable'
         architecture: x64
 
-    # 7. Перевірка структури Flutter-проєкту (зрозуміла помилка замість загадкової)
+    # 7. Перевірка структури Flutter-проєкту
     - name: Check Flutter project layout
       shell: pwsh
       run: |
         $dir = $env:FLUTTER_PROJECT_DIR
         $missing = @()
         if (-not (Test-Path (Join-Path $dir 'pubspec.yaml'))) { $missing += 'pubspec.yaml' }
-        if (-not (Test-Path (Join-Path $dir 'windows'))) { $missing += 'windows/ (створіть: flutter create --platforms=windows .)' }
+        if (-not (Test-Path (Join-Path $dir 'windows'))) { $missing += 'windows/' }
         if (-not (Test-Path (Join-Path $dir $env:FLUTTER_TARGET))) { $missing += $env:FLUTTER_TARGET }
         if ($missing.Count -gt 0) {
-          Write-Error ("У Flutter-проєкті '" + $dir + "' не знайдено: " + ($missing -join ', '))
+          Write-Error ("Missing in Flutter project '" + $dir + "': " + ($missing -join ', '))
           exit 1
         }
 
@@ -119,7 +118,7 @@ jobs:
         name: Alternative-CMYK-Calculator-Windows
         path: ${{ env.FLUTTER_PROJECT_DIR }}/build/windows/x64/runner/Release/
 
-    # 12. Публікація в GitHub Release: за тегом v* або вручну (Run workflow + тег існуючого релізу)
+    # 12. Публікація в GitHub Release: за тегом v* або вручну (Run workflow + тег релізу)
     - name: Resolve release tag
       shell: pwsh
       env:
