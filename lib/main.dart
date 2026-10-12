@@ -276,6 +276,8 @@ class _CalculatorScreenState extends State<CalculatorScreen>
       msg = 'Профіль завантажено: ${_baseName(path)}';
     } on EngineException catch (e) {
       msg = e.message;
+    } catch (e) {
+      msg = 'Не вдалося завантажити рушій (cmyk_engine.dll): $e';
     }
     setState(() {
       if (eng != null) {
@@ -356,6 +358,8 @@ class _CalculatorScreenState extends State<CalculatorScreen>
       _saveNow();
     } on EngineException catch (e) {
       if (mounted) setState(() => _status = e.message);
+    } catch (e) {
+      if (mounted) setState(() => _status = 'Неочікувана помилка під час розрахунку: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }

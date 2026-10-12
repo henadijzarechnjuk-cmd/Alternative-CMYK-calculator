@@ -30,6 +30,10 @@ class EngineException implements Exception {
         return 'Допуск ΔE не може бути від’ємним.';
       case -8:
         return 'Невідомий режим входу.';
+      case -100:
+        return 'cmyk_engine.dll не містить функції engine_search_ex: це DLL від старішої збірки. '
+            'Перебудуйте проєкт (оновіть core_api.cpp та cmyk_engine_c.h) і запускайте .exe '
+            'з тієї ж папки, де лежить свіжа cmyk_engine.dll.';
       default:
         return 'Помилка рушія (код $code).';
     }
@@ -94,6 +98,8 @@ class CmykEngine {
   static final _DestroyD _destroy = _lib.lookupFunction<_DestroyC, _DestroyD>('engine_destroy');
 
   static CmykEngine open(String profilePath) {
+    // Перевіряємо одразу, а не під час розрахунку: інтерфейс і DLL мають бути з однієї збірки
+    if (!_lib.providesSymbol('engine_search_ex')) throw const EngineException(-100);
     final p = profilePath.toNativeUtf16();
     final err = calloc<Int32>();
     try {
