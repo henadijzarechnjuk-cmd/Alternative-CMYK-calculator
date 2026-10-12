@@ -56,7 +56,7 @@ jobs:
         dumpbin /exports cmyk_engine.dll | findstr /C:"engine_create" || exit /b 1
         dumpbin /exports cmyk_engine.dll | findstr /C:"engine_destroy" || exit /b 1
         dumpbin /exports cmyk_engine.dll | findstr /C:"engine_search" || exit /b 1
-	dumpbin /exports cmyk_engine.dll | findstr /C:"engine_search_ex" || exit /b 1
+	      dumpbin /exports cmyk_engine.dll | findstr /C:"engine_search_ex" || exit /b 1
 
     # 6. Налаштування Flutter SDK
     - name: Set up Flutter SDK
