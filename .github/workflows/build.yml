@@ -11,7 +11,7 @@ on:
       release_tag:
         description: "Тег існуючого релізу, до якого прикріпити збірку (напр. 1.1.0). Порожньо = лише збірка"
         required: false
-        default: "1.1.0+"
+        default: "1.1.0"
 
 permissions:
   contents: write   # потрібно лише для публікації Release
